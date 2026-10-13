@@ -101,9 +101,15 @@ Total tokens: {inspect["total_tokens"]}
                         max_tokens=500
                     )
 
-                    inspect_answer = (
-                        inspect_response.choices[0].message.content
-                    )
+                    choice = inspect_response.choices[0]
+                    inspect_answer = choice.message.content
+                    
+                    if not inspect_answer or not inspect_answer.strip():
+                        st.error(
+                            "The model returned an empty response. "
+                            f"Finish reason: {choice.finish_reason}"
+                        )
+                        st.stop()
 
                     # Save Inspect conversation
                     inspect_history.append({
