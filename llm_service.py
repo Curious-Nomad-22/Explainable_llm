@@ -7,10 +7,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# NVIDIA API configuration
+API_KEY = os.getenv("NVIDIA_API_KEY")
+
+if not API_KEY:
+    raise ValueError(
+        "NVIDIA_API_KEY is missing. Check your local .env file."
+    )
+
 client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
-    api_key=os.getenv("NVIDIA_API_KEY")
+    api_key=API_KEY,
+    timeout=60.0,
+    max_retries=0
 )
 
 MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
@@ -19,9 +27,9 @@ MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
 def call_llm(messages, temperature=0.3, max_tokens=500, top_p=1):
 
     max_retries = 3
+    last_error = None
 
     for attempt in range(max_retries):
-
         try:
             response = client.chat.completions.create(
                 model=MODEL,
@@ -31,22 +39,45 @@ def call_llm(messages, temperature=0.3, max_tokens=500, top_p=1):
                 top_p=top_p
             )
 
-            # Validate the model response
-            answer = response.choices[0].message.content
-
-            if not answer or not answer.strip():
+            if not response.choices:
                 raise ValueError(
-                    "The model returned an empty response."
+                    "The API returned no choices."
+                )
+
+            choice = response.choices[0]
+            answer = choice.message.content
+
+            if not isinstance(answer, str) or not answer.strip():
+                finish_reason = choice.finish_reason
+                refusal = getattr(
+                    choice.message, "refusal", None
+                )
+
+                raise ValueError(
+                    "Empty model response. "
+                    f"Finish reason: {finish_reason}; "
+                    f"Refusal: {refusal}"
                 )
 
             return response
 
         except Exception as e:
+            last_error = e
+            error_text = str(e).lower()
 
-            if "503" in str(e) or "ResourceExhausted" in str(e):
+            retryable = (
+                "503" in error_text
+                or "resourceexhausted" in error_text
+                or "empty model response" in error_text
+                or "returned no choices" in error_text
+            )
 
-                if attempt < max_retries - 1:
-                    time.sleep(5 * (attempt + 1))
-                    continue
+            if retryable and attempt < max_retries - 1:
+                time.sleep(2 * (attempt + 1))
+                continue
 
             raise
+
+    raise RuntimeError(
+        f"LLM request failed after retries: {last_error}"
+    )
